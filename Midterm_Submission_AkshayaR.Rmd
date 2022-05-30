@@ -1,0 +1,716 @@
+---
+title: "Midterm"
+author: "Akshaya Ravichandran"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+
+```{r, include=FALSE}
+library(tidyverse)
+hotel_elevator = read.csv("hotel_elevator.csv")
+hotel_frontdesk = read.csv("hotel_frontdesk.csv")
+hotel_door = read.csv("hotel_door.csv")
+```
+
+# QUESTION 2: Easter eggs/Stories from the datasets.
+
+## 1.Where are people going from and to?
+
+```{r echo=T, results='hide'}
+table(hotel_elevator$from, hotel_elevator$to)
+```
+### Insights: 
+People have used the elevator to go from floor 1 to floor 18 followed 8 and vice versa for almost double the number of times compared to other floors. On observing the from and to columns in hotel_elevator we can see that the guests have visited only the ground floor and the floor in which their room is situated.
+
+### Recommendation: 
+More info about other/all floors visited could help us find out if elevators were used more during the time of false openings and get more insights about the security flaws.
+
+## 2.What cars are they using to go from?
+
+```{r echo=T, results='hide'}
+#There are 18 floors excluding the ground floor
+table(hotel_elevator$from, hotel_elevator$car)
+table(hotel_frontdesk$floor, hotel_frontdesk$room_on_floor)
+
+
+```
+
+### Insights: 
+Most guests seem to use car 1, which could be either because car 1 is the closest to most rooms or because guests are more familiar with where it's located or elevator 1 could be bigger in size/capacity.
+
+### Recommendation:
+Details about the maximum capacity for occupancy of each elevator car would help derive insights about why car 1 is used more.
+
+## 3.Heatmap of car-floor relationship:
+
+```{r}
+library(ggplot2)
+
+count = c(table(hotel_elevator$from, hotel_elevator$car))
+car = rep(1:3, each=19)
+from = rep(c(1:12,14:20), times=3)
+dat_counts = data.frame(count, car, from)
+
+
+
+g = ggplot(dat_counts, aes(y=from, x=car, fill=count)) +
+	 geom_tile()
+	  
+plot(g)
+```
+
+Floor 1 (ground floor) is the most visited floor i.e. it could be the reception so all guests arrive here initially and need to get back to the reception everytime they wish to leave the hotel. We can observe that the greyish white area in the middle of the heatmap is because there is no floor 13, which could be because the number 13 is considered unlucky (superstitious belief) in many cultures.
+
+## 4.Analysing Missing Data:
+```{r,include=FALSE}
+library(mice)
+```
+
+```{r echo=T, results='hide'}
+
+md.pattern(hotel_frontdesk, rotate.names = TRUE)
+```
+
+```{r echo=T, results='hide'}
+md.pattern(hotel_door,rotate.names = TRUE)
+```
+
+### Insights:
+We could look at this in two ways: 
+The room_id is dependent on the floor and room_on_floor which itself are missing (or)
+floor and room_on_floor are dependent on the room_id which itself is missing. 
+Therefore, using our second assumption we can say that room_id is MCAR while floor & room_on_floor are missing at random. day_of_door column in hotel_door is MAR since, it'd dependent on the room_id which is missing.
+
+```{r echo=T, results='hide'}
+
+md.pattern(hotel_elevator, rotate.names = TRUE)
+```
+
+### Insights:
+
+from and to are missing at random as they are dependent on the room_id which itself is missing. Therefore, room_id is missing completely at random here.
+
+## 5.Number of rooms on each floor
+```{r}
+df<- hotel_frontdesk %>% 
+  group_by(floor) %>%
+  summarise(count= n_distinct(room_on_floor))
+head(df, 18)
+
+```
+
+### Insights: 
+Most floors have 29 rooms however, floors 14,17 have only 27 rooms, while floors 4, 6, 9, 15 have 28 rooms. This might be because of the 17 missing data of floors and room_on_floors in the hotel_frontdesk table.
+
+## Pattern between prebooked days
+```{r }
+#df <- tibble(x=hotel_door$day_of_door)
+df <- tibble(x=hotel_frontdesk$days_booked_ago)
+print(dplyr::count(df, x, sort = TRUE))
+```
+
+### Insights:
+
+Most guests opened their rooms either on the first day or immediately which is the usual expected pattern. Most guests booked their rooms 21-18 days ago while 36 days ago is the maximum number of days before which a room was prebooked.
+
+```{r, include=FALSE}
+library(VIM)
+```
+
+### Why imputation may not be required for the hotel_frontdesk table
+```{r echo=T, results='hide'}
+
+#below shows that 99% percentage of data is available(not missing)
+aggr_plot <- aggr(hotel_frontdesk, col=c('navyblue','red'), 
+numbers=TRUE, sortVars=TRUE, labels=names(hotel_frontdesk), cex.axis=.7, gap=3,
+ylab=c("Histogram of missing data","Pattern"))
+
+#dropping rows from hotel front desk where roomid =NA
+
+hotel_frontdesk_roomid_dropped<- drop_na(hotel_frontdesk)
+hotel_frontdesk <- hotel_frontdesk_roomid_dropped
+
+```
+
+### Insights:
+
+About 99% of the data is available only 0.008% (approx) of entire data is missing because of these 3 variables. Since, it does not make sense to impute room_id's we have dropped all rows with missing room_id's. We also need to note that the same 17 guests, room_id's are missing from all 3 tables.
+
+# QUESTION 1: Combining data from different tables to draw insights
+## Imputing day_of_door in hotel_door
+
+```{r}
+defaultW <- getOption("warn")
+options(warn = -1)
+#Using the check in timestamps of each guest in hotel_frontdesk, we can match these with those in hotel_door
+if(hotel_door$ts_hour == hotel_frontdesk$in_ts_hour)
+  {
+  hotel_door$day_of_door=0
+  }
+sapply(hotel_door, function(x) sum(is.na (x)))
+hotel_door <- drop_na(hotel_door)
+sapply(hotel_door, function(x) sum(is.na (x)))
+options(warn = defaultW)
+
+```
+
+## Joining all three datasets based on guest_id for analysis
+```{r}
+frontdesk_door_merged <- merge(hotel_frontdesk, hotel_door, by.x = "guest_id", 
+             by.y = "guest_id", all.x = TRUE, all.y = FALSE)
+```
+
+```{r}
+#frontdesk_door_elevator
+frontdesk_door_elevator <- merge(frontdesk_door_merged,hotel_elevator, by.x = "guest_id", 
+             by.y = "user_id", all.x = TRUE, all.y = FALSE)
+
+## we have combined datasets using joins- first we have joined the frontdesk and elevator dataset using left join then joined door dataset to our previous prepared dataset.
+```
+
+# QUESTION 1: Data has been combined from different tables for below analysis
+
+##  Length of stay vs guests who had most false attempts
+```{r}
+#Q1
+#how datasets have been combined -Q1
+#hotel_frontdesk and hotel_door tables have been combined here for use
+#length of stay vs open_success = false
+sub7= filter(frontdesk_door_merged, open_success=="FALSE")
+df2 <- tibble(x= sub7$length_of_stay, y=sub7$open_success)
+new_df<-dplyr::count(df2, x,y, sort = TRUE)
+
+
+barplot(new_df$n,
+main = "Length of stay of guests having most number of false openings",
+xlab = "length of stay",
+ylab = "open success= false",
+names.arg = new_df$x,
+col = "pink"
+)
+
+```
+
+### Insights:
+We can note that most guests who have failed to open the door correctly on the first attempt have a duration of stay of 2 days.This could be indicative of a pattern wherein most guests who plan on stealing/thiefs plan 2 day trips. This also indicates that guests who stay for a duration more than 2 days usually do not have any that many incidents of false openings in comparison. Also a clear linear decrease in the number of false openings can be observed as the length of stay of guests increases. This could also mean that the longer they stay, less likely they are to they are to fail to open the door (i.e. used to it).
+
+## Months where most false login attempts occurred
+```{r}
+#month vs open_success= false
+
+date <- format(as.POSIXct(sub7$in_timestamp, format='%Y-%m-%d %H:%M:%S'),format='%Y-%m-%d')
+date <- as.Date(date)
+m<-months(date)
+myDate = as.POSIXct(date)
+numeric_month<-format(myDate,"%m")
+df2 <- tibble(x= m)
+
+sub7= filter(frontdesk_door_merged, open_success=="FALSE")
+df2 <- tibble(x= m , y=sub7$open_success)
+new_df<-dplyr::count(df2, x,y, sort = TRUE)
+
+barplot(new_df$n,
+main = "Months having most number of false openings",
+xlab = "months",
+ylab = "open success= false",
+names.arg = new_df$x,
+col = "lavender"
+)
+
+```
+
+### Insights:
+We can infer that false login attempts/possibility of theft was highest around 662 in June.We can see a significant decrease in the upcoming months. This indicates that the hotel management might have noticed the issues with keycard open attempts and rectified it.
+
+### Recommendations:
+The hotel management needs to keep monitoring this issue of false openings as it might not be a good experience for guests, if the keycard malfunctions often.
+
+## QUESTION 2- CONTINUED
+## 6. Number of false attempts made to open the hotel door:
+```{r include=FALSE}
+
+library(ggplot2)
+
+
+```
+
+```{r echo=T, results='hide'}
+df <- tibble(x= hotel_door$open_success)
+dplyr::count(df, x, sort = TRUE)
+
+```
+
+### Insights: 
+We can observe that approximately 785 out 7990 attempts made to open the door have been unsuccessful.
+
+## 7. Rooms that have maximum number of false login attempts
+```{r}
+sub1=filter(hotel_door, open_success=='FALSE') 
+df2 <- tibble(x= sub1$open_success,y=sub1$room_id)
+new_df<-dplyr::count(df2, x, y, sort = TRUE)
+sub2<-head(new_df, 10)
+
+barplot(sub2$n,
+main = "room id's having maximum false openings",
+xlab = "room_id",
+ylab = "open_success=false",
+names.arg = sub2$y,
+col = "darkred"
+)
+
+
+```
+
+### Insights:
+Therefore, we can conclude that in room 404 has had the maximum number of false login attempts.
+
+### Recommendation:
+Other background information about any keycard issues if any could help us understand why this particular room has had so many false logins. User type -> if specified as guest or staff -> could help in analyzing on who is responsible/ the person behind the false opening attempts, i.e. if it's a an attempt at theft or just a login/keycard issue.
+
+## 8. Guests that had done major number of false attempts is shown below
+```{r}
+sub3=filter(hotel_door, open_success=='FALSE') 
+
+df2 <- tibble(x= sub3$guest_id,y=sub3$room_id)
+
+new_df<-dplyr::count(df2, x, y, sort = TRUE)
+guests_with_max_false_logins<-head(new_df, 10)
+guests_with_max_false_logins
+
+t<-table(hotel_frontdesk$floor, hotel_frontdesk$room_on_floor)
+
+#There are 18 floors -> ground floor has no rooms (must be the reception)
+```
+
+### Insights:
+Therefore, guests with guest_id 2022,10164 had the most number of false login attempts into room no 404, indicative of probably making attempts to login using the wrong keycard or trying to break in. While referring to the hotel_elevator table, we can see that guest id 2022 has used the elevator around 8 times on that particular day (Saturday).This could be indicative of multiple people involved in at trying to open the door probably because of a keycard issue (assumption). Guest_id (2022) had false login attempts in week 2 while guest_id 10164 had false login attempts in week 10. This indicates that both events might not be related/interlinked and probably the key card for room_id 404 has some issues because of which the false login attempts have happened.
+
+### Recommendation: 
+More info about keycard issues (if any) for all rooms and a security camera (to spot the person opening the door) would be needed, to conclude if this was intentionally done to break into the room (or) a keycard issue.
+
+## 9. Timings at which most false attempts at opening 
+```{r}
+sub4=filter(hotel_door, open_success=='FALSE') 
+df2 <- tibble(x= sub4$ts_hour)
+
+new_df<-dplyr::count(df2, x, sort = TRUE)
+timings<-head(new_df, 10)
+
+barplot(timings$n,
+main = "hour of false door opening attempts",
+ylab = "count of false door openings",
+xlab = "hour of day (0-23)",
+names.arg = timings$x,
+col = "blue"
+)
+
+```
+
+### Insights:
+
+This means that most of the false attempts have occurred at around 6 pm,5pm,4pm in the evening, followed by  7pm at night and 12-1pm in the afternoon. The reason behind this could be that these are usually the prime times when guests are out of their rooms either for evening snacks/events or it might be the time they come back to the hotel after exploring the place. 
+
+## 10. Relationship between room price/night and day before which the room was booked
+```{r}
+
+##pattern between price per night and booking day time gap
+price_per_night<-hotel_frontdesk$price/ hotel_frontdesk$length_of_stay
+plot(x=hotel_frontdesk$days_booked_ago, y=price_per_night, pch = 19 ,
+     col = "red", xlab = "days_booked_ago", ylab = "price per night")
+
+```
+
+### Insights:
+No particular pattern can be observed between the days booked ago and price i.e. irrespective of whether guests booked 10 days ago or 35 days ago, price remains quite independent of that. 
+
+## 11. Commonly preferred trip duration by guests
+```{r}
+#most common number of days guests stay (length of stay)
+
+df2 <- tibble(x= hotel_frontdesk$length_of_stay)
+new_df<-dplyr::count(df2, x, sort = TRUE)
+
+barplot(new_df$n,
+main = "most common number of days guests stay",
+ylab = "number of guests",
+xlab = "length of stay",
+names.arg = new_df$x,
+col = "purple"
+)
+```
+
+### Insights:
+Therefore, we can conclude that almost 833 guests (approximately 40% ) prefer to take a trip for 1 day followed by 2,4,3,5,6 and 7 days. 
+
+### Recommendation: 
+1.This could indicate that the hotel is either not in a touristy spot or the services provided aren't commendable or that most guests are those who come for short business trips. 
+
+2.If more information about where the guests come from was given, we could categorize the type of guests as local population or foreigners and who are frequent guests of the hotel. 
+
+3.More insights on pricing information of other hotels could help us identify if the hotel is budget friendly and maybe that's one of the reasons why people prefer this particular hotel.
+
+## 12. Common day at which most guests arrive at the hotel
+```{r}
+df2 <- tibble(x= hotel_frontdesk$in_day_of_week)
+new_df<-dplyr::count(df2, x, sort = TRUE)
+
+barplot(new_df$n,
+main = "guests arrive/start their trip mostly on the these days",
+xlab = "number of guests",
+ylab = "days",
+names.arg = new_df$x,
+col = "darkred"
+)
+
+
+```
+
+### Insights:
+This means that most guests seem to arrive at the hotel on Saturdays and Fridays, probably because it's closer to the weekend and they can get to spend the entire weekend as part of their vacation.
+
+## 13. Days at which most guests end their trip
+```{r}
+df2 <- tibble(x= hotel_frontdesk$out_day_of_week)
+new_df<-dplyr::count(df2, x, sort = TRUE)
+
+
+barplot(new_df$n,
+main = "guests leave mostly on the these days",
+xlab = "number of guests",
+ylab = "days",
+names.arg = new_df$x,
+col = "yellow"
+)
+```
+
+### Insights:
+This implies that most guests arrive on saturday and leave on sunday ( 1 day trips are most common), followed by 2 day trips ( Arrive on Friday and leave on Sunday).
+This therefore, confirms our previous findings are correct.
+
+## 14. Months where the hotel has high demand by guests
+```{r, include=FALSE}
+library(lubridate)
+```
+
+```{r}
+date <- format(as.POSIXct(hotel_frontdesk$in_timestamp, format='%Y-%m-%d %H:%M:%S'),format='%Y-%m-%d')
+date <- as.Date(date)
+m<-months(date)
+myDate = as.POSIXct(date)
+numeric_month<-format(myDate,"%m")
+df2 <- tibble(x= m)
+
+
+
+new_df<-dplyr::count(df2, x, sort = TRUE)
+new_df
+barplot(new_df$n,
+main = "Most guests arrive in the following months",
+xlab = "months",
+ylab = "number of guests arriving in each month",
+names.arg = new_df$x,
+col = "darkred"
+)
+
+
+
+```
+
+### Insights:
+Therefore, we can observe that most guests prefer to travel in the August (733 guests) and September is the least preferred month. We can assume this pattern is due to either good climate at the place where the hotel is situated, suitable for recreational activities or there could be some special events that happen in the hotel's location attracting tourists.
+
+### Recommendation:
+We have the guest data for the months of June, July, Aug and Sept. If we had the data for other months of the year, we could have a more accurate picture of which months the guests like to visit the hotel the most and make recommendations to the hotel accordingly to increase prices that time for increasing profits.
+
+## 15. Revenue per month for the hotel
+
+```{r}
+df<- hotel_frontdesk %>% 
+  group_by(months(as.Date(as.POSIXct(hotel_frontdesk$in_timestamp, format='%Y-%m-%d %H:%M:%S'),format='%Y-%m-%d'))) %>%
+  summarise(count= sum(price))
+
+df
+```
+
+### Insights:
+We can observe that the hotel makes maximum revenue in the month of August (it's the peak season as per our analysis as well).
+
+## 16. Relationship between price per night and booking month
+```{r}
+#pattern between price per night and booking month
+defaultW <- getOption("warn")
+options(warn = -1)
+df2 <- tibble(x= numeric_month, y= price_per_night)
+new_df<-dplyr::count(df2, x, y, sort = TRUE)
+p<-ggplot(data=new_df,mapping= aes(x=new_df$x,y=new_df$y))+ geom_point()
+p+ggtitle("Months where the price of hotel rooms per night is the highest")+ xlab("months")+ylab("price per night")
+options(warn = defaultW)
+```
+
+### Insights:
+Price per night seems to be highest in the month of June.
+
+### Recommendation:
+However, since most people travel in August and July, it would make more sense to increase the price in the months of August and July where the demand/ number of guests who would book the hotel for stay would be more to improve overall profits.
+
+
+## 17. Relationship between price and floor number
+```{r}
+defaultW <- getOption("warn")
+options(warn = -1)
+df2 <- tibble(x= hotel_frontdesk$floor, y= price_per_night)
+new_df<-dplyr::count(df2, x, y, sort = TRUE)
+p<-ggplot(data=new_df,mapping= aes(x=new_df$x,y=new_df$y))+ geom_point()
+p+ggtitle("Which floors cost more")+ xlab("floors")+ylab("price per night")
+options(warn = defaultW)
+
+
+```
+
+### Insights:
+We can clearly observe a linear relationship between the floors and price per night i.e. the minimum starting rate for higher floors is higher than that of lower floors and the maximum range of prices for higher floors also seems to be higher.
+
+## 18. Checkout time of most guests:
+```{r}
+df2 <- tibble(x= hotel_frontdesk$out_ts_hour)
+new_df<-dplyr::count(df2, x, sort = TRUE)
+
+
+barplot(new_df$n,
+main = "Time at which most guests leave the room",
+xlab = "checkout time",
+ylab = "number of guests",
+names.arg = new_df$x,
+col = "darkred"
+)
+```
+
+### Insights:
+We can infer that most (728) guests leave their rooms at around 9am or 8am. This could mean that they usually get up for breakfast or to go out at around 9am or they usually leave their rooms on the last day of trip at 9am. Also, all guests leave their room by 12 pm irrespective of the day of their trip.
+
+## 19. Weeks vs price per night
+```{r}
+ggplot(data = hotel_frontdesk, mapping = aes(x = hotel_frontdesk$price, y = hotel_frontdesk$week)) + 
+  geom_point(na.rm = TRUE)
+options(warn = defaultW)
+```
+
+### Insights:
+The most expensive room costed about 4800$ per night. Week 3,8 had the highest prices per night for each room.
+
+
+```{r, include= FALSE}
+hotel_frontdesk <- read_csv("hotel_frontdesk.csv")
+```
+
+
+## Correlation between different variables in hotel_frontdesk
+```{r}
+library(corrplot)
+library(RColorBrewer)
+library(pheatmap)
+
+M <-cor(hotel_frontdesk_roomid_dropped[,-c(1,2,3,5,11,12)])
+corrplot(M, type="upper", order="hclust",
+         col=brewer.pal(n=8, name="RdYlBu"))
+```
+
+# Imputing hotel_frontdesk (for experimentation to see how it affects our prediction)
+
+```{r echo=T, results='hide'}
+hotel_frontdesk <- read.csv("hotel_frontdesk.csv")
+
+#IMPUTATION OF ROOM IDS
+hotel_frontdesk_collinearity_removed <- subset(hotel_frontdesk, select = -c(6,7) )
+
+tempData <- mice(hotel_frontdesk_collinearity_removed,m=5,maxit=50,meth='pmm',seed=500)
+summary(tempData)
+#above imputes room id using pmm
+
+tempData$imp$room_id
+tempData$meth
+completedData <- complete(tempData,1)
+
+sapply(completedData, function(x) sum(is.na (x)))
+
+DF1 <- cbind(completedData, hotel_frontdesk[!names(hotel_frontdesk) %in% names(completedData)])
+DF2 <- DF1[, c(1,2,3,4,5,13,14,6,7,8,9,10,11,12)]
+
+#DF2 IS THE HOTEL_FRONT DESK ROOM_ID IMPUTED DATAFRAME BUT FLOOR AND ROOM_ON_FLOOR ARE MISSING
+```
+
+```{r}
+# Floor and room_on_floor depend on room_id, so they have been imputed based on the room_id
+#same code snippet has been used for all 17 missing room_id's (not shown here due to keep the report short)
+
+bar <- subset(DF2, guest_id ==1131)
+bar$floor =15
+bar$room_on_floor =21
+DF2[match(bar$guest_id, DF2$guest_id), ] <- bar
+```
+
+```{r}
+hotel_frontdesk_imputed<- DF2
+ #final imputed hotel front desk table
+```
+
+```{r include=FALSE}
+
+hotel_frontdesk_imputed <- hotel_frontdesk_roomid_dropped
+
+```
+
+# QUESTION 3:
+
+## Lasso regression to predict hotel prices using imputed data
+```{r, include=FALSE}
+library("glmnet")
+```
+
+```{r echo=T, results='hide'}
+#Describe a model to predict hotel prices
+#define response variable 
+y <- hotel_frontdesk_imputed$price
+f <- as.formula(y ~ floor+ I(log(length_of_stay)^0.5)+week+floor:length_of_stay)
+#define matrix of predictor variables
+x <- model.matrix(f, hotel_frontdesk_imputed)
+#finding best lambda using k fold cv
+cv_model <- cv.glmnet(x, y, alpha = 1)
+best_lambda <- cv_model$lambda.min
+best_lambda
+#plot(cv_model)
+#from this we can infer with about 95% confidence that the best lambda uses only about 2-3 variables
+#plot(cv_model$glmnet.fit, "lambda", label=TRUE)
+best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda)
+#coef(best_model)
+y_predicted <- predict(best_model, s = best_lambda, newx = x)
+sst <- sum((y - mean(y))^2)
+sse <- sum((y_predicted - y)^2)
+rsq <- 1 - sse/sst
+rsq
+
+new = matrix(c(17,6,1,17,6), nrow=1, ncol=5)
+predict(best_model, s = best_lambda, newx = new)
+
+```
+
+```{r, include=FALSE}
+rsq = 0.6553141
+
+```
+
+```{r}
+coef(best_model)
+rsq
+
+```
+
+## Linear regression to predict hotel prices 
+```{r}
+#Describe a model to predict hotel prices
+#MODEL USING ONE CONTINUOUS, CATEGORICAL, POLYNOMIAL AND INTERACTION TERM.
+hotel_frontdesk_original <- read.csv("hotel_frontdesk.csv")
+hotel_frontdesk_original= na.omit(hotel_frontdesk_original)
+hotel_price_pred_model<- lm(price~ floor+ I(log(length_of_stay)^0.5)+in_day_of_week+floor:length_of_stay, data= hotel_frontdesk )
+#summary(hotel_price_pred_model)
+summary(hotel_price_pred_model)$r.squared
+summary(hotel_price_pred_model)$df
+
+log_odds = predict(hotel_price_pred_model)
+predicted = exp(log_odds)/(1+exp(log_odds))
+hotel_frontdesk_original$predicted = predicted
+
+
+#MODEL WITH HIGHEST R SQUARED AND LOWEST DF
+hotel_price_pred_model<- lm(price~ floor+ I(log(length_of_stay)^0.5)+week+floor:length_of_stay, data= hotel_frontdesk )
+summary(hotel_price_pred_model)$r.squared
+summary(hotel_price_pred_model)$df
+
+
+```
+
+### Insights:
+Price is highly correlated/dependent on the length of stay (since, more no of days, more is the cost), floor (higher floors have more cost as observed) and week (some weeks have higher prices for rooms than others).
+
+Using imputed data in lasso regression gives us slightly better r squared compared to while using unimputed data. This reconfirms that our approach of dropping the 17 missing room_id's was a right decision.From the lasso regression model, we can say with 95% confidence that 4 variables would be enough to accurately predict the price.
+
+# QUESTION 4:
+
+## Lasso regression to predict length_of_stay using imputed data
+
+```{r echo=T, results='hide'}
+
+#Describe a model to predict length of stay
+#define response variable 
+y <- hotel_frontdesk_imputed$length_of_stay
+#define matrix of predictor variables
+x <- data.matrix(hotel_frontdesk_imputed[, c('price','week','out_day_of_week','days_booked_ago')])
+#finding best lambda using k fold cv
+cv_model <- cv.glmnet(x, y, alpha = 1)
+best_lambda <- cv_model$lambda.min
+best_lambda
+#plot(cv_model)
+#from this we can infer with about 95% confidence that the best lambda uses only about 2-3 variables
+#plot(cv_model$glmnet.fit, "lambda", label=TRUE)
+best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda)
+coef(best_model)
+y_predicted <- predict(best_model, s = best_lambda, newx = x)
+sst <- sum((y - mean(y))^2)
+sse <- sum((y_predicted - y)^2)
+rsq <- 1 - sse/sst
+rsq
+
+
+```
+
+```{r}
+coef(best_model)
+rsq
+
+
+```
+
+
+## Linear regression to predict length of stay
+```{r }
+#Describe a model to predict length of stay
+hotel_staylength_pred_model<- glm(length_of_stay ~  floor+ I(log(price)^0.5) 
+                              + out_day_of_week + floor:price, data= hotel_frontdesk)
+my_sum =summary(hotel_staylength_pred_model)
+1 - (my_sum$deviance / my_sum$null.deviance)
+#df
+my_sum$df.null- my_sum$df.residual 
+
+
+log_odds = predict(hotel_staylength_pred_model)
+predicted = exp(log_odds)/(1+exp(log_odds))
+hotel_frontdesk_original$predicted = predicted
+```
+
+```{r}
+# USING IN DAY OF WEEK
+hotel_staylength_pred_model<- glm(length_of_stay ~  floor+ I(log(price)^0.5) 
+                              + in_day_of_week + floor:price, data= hotel_frontdesk)
+my_sum =summary(hotel_staylength_pred_model)
+1 - (my_sum$deviance / my_sum$null.deviance)
+#df
+my_sum$df.null- my_sum$df.residual 
+
+
+log_odds = predict(hotel_staylength_pred_model)
+predicted = exp(log_odds)/(1+exp(log_odds))
+hotel_frontdesk_original$predicted = predicted
+
+```
+
+### Insights:
+Length of stay seems to be highly correlated on out_day_of_week and price more than in_day_of_week, though typically we expect in_day_of_week to be more useful in a hotel dataset. We can say from the cv model with 95% confidence that 3-4 variables would be enough to accurately predict the length of stay.
+
+### Recommendations:
+1.Information about the number of guests staying in each room would have helped find out the target audience i.e. families, adults etc.. who like to visit the hotel and allow us to give suggestions on how to enhance the hotel facilities accordingly.
+
+2.More info about most frequently visiting guests could help us advise the hotel staff give better offers/deals to them.
+
